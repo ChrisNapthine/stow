@@ -1,7 +1,9 @@
 package local
 
 import (
+	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -24,10 +26,14 @@ const (
 	MetadataIsHardlink = "is_hardlink"
 	MetadataIsSymlink  = "is_symlink"
 	MetadataLink       = "link"
+	MetadataUser       = "user_data"
 )
+
+const MetadataFileExt = "._meta"
 
 type item struct {
 	path          string
+	metaPath      string
 	contPrefixLen int
 	infoOnce      sync.Once // protects info
 	info          os.FileInfo
@@ -88,6 +94,14 @@ func (i *item) ensureInfo() error {
 			return
 		}
 		i.setMetadata(i.info) // merge file and metadata maps
+		var md map[string]interface{}
+		md, i.infoErr = i.readMeta()
+		if i.infoErr != nil {
+			return
+		}
+		if md != nil {
+			i.metadata[MetadataUser] = md
+		}
 	})
 	return i.infoErr
 }
@@ -104,4 +118,31 @@ func (i *item) Metadata() (map[string]interface{}, error) {
 		return nil, err
 	}
 	return i.metadata, nil
+}
+
+func (i *item) readMeta() (map[string]interface{}, error) {
+	if len(i.metaPath) == 0 {
+		return nil, nil
+	}
+	b, err := i.readFileBytes(i.metaPath)
+	if err != nil {
+		return nil, err
+	}
+	var metadata map[string]interface{}
+	err = json.Unmarshal(b, &metadata)
+	if err != nil {
+		return nil, err
+	}
+	return metadata, nil
+}
+
+func (i *item) readFileBytes(FileName string) (b []byte, err error) {
+	f, err := os.Open(FileName)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	b, err = ioutil.ReadAll(f)
+	return
 }

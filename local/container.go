@@ -1,8 +1,11 @@
 package local
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -45,14 +48,22 @@ func (c *container) CreateItem(name string) (stow.Item, io.WriteCloser, error) {
 }
 
 func (c *container) RemoveItem(id string) error {
-	return os.Remove(id)
+	err := os.Remove(id)
+	if err != nil {
+		return err
+	}
+	metaPath := id + MetadataFileExt
+	fi, err := os.Stat(metaPath)
+	if err == nil && fi != nil && !fi.IsDir() {
+		err = os.Remove(metaPath)
+		if err != nil {
+			return errors.New(fmt.Sprintf("failed to remove meta data: %s", err.Error()))
+		}
+	}
+	return nil
 }
 
 func (c *container) Put(name string, r io.Reader, size int64, metadata map[string]interface{}) (stow.Item, error) {
-	if len(metadata) > 0 {
-		return nil, stow.NotSupported("metadata")
-	}
-
 	path := filepath.Join(c.path, filepath.FromSlash(name))
 	item := &item{
 		path:          path,
@@ -74,6 +85,19 @@ func (c *container) Put(name string, r io.Reader, size int64, metadata map[strin
 	if n != size {
 		return nil, errors.New("bad size")
 	}
+
+	if len(metadata) > 0 {
+		metaPath := path + MetadataFileExt
+
+		var j []byte
+		j, err = json.MarshalIndent(metadata, "", "    ")
+		err = ioutil.WriteFile(metaPath, j, 0644)
+		if err != nil {
+			return item, errors.New(fmt.Sprintf("failed to save meta data: %s", err.Error()))
+		}
+		item.metaPath = metaPath
+	}
+
 	return item, nil
 }
 
@@ -115,8 +139,14 @@ func (c *container) Items(prefix, cursor string, count int) ([]stow.Item, string
 		if !strings.HasPrefix(f.Name(), prefix) {
 			continue
 		}
+		metaPath := path + MetadataFileExt
+		fi, err := os.Stat(metaPath)
+		if err != nil || fi == nil || fi.IsDir() {
+			metaPath = ""
+		}
 		item := &item{
 			path:          path,
+			metaPath:      metaPath,
 			contPrefixLen: len(c.path) + 1,
 		}
 		items = append(items, item)
